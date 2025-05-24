@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# 安装必要依赖
+function install_royal_tools() {
+    echo "📦 安装皇家依赖中..." >&2
+    if ! command -v jq &>/dev/null; then
+        apt-get install -y jq || yum install -y jq
+    fi
+    if ! command -v whois &>/dev/null; then
+        apt-get install -y whois || yum install -y whois
+    fi
+}
+
+# 初始化JSON输出
+function init_json() {
+    echo '{
+        "metadata": {
+            "script": "皇家服务器巡检大典 v5.0",
+            "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+        },
+        "tests": {}
+    }'
+}
+
+# 更新JSON结果
+function update_json() {
+    jq --argjson new "$1" '.tests += $new'
+}
+
+# IP质量检测
+function ip_quality_check() {
+    local ip=$(curl -s ifconfig.me)
+    local asn_info=$(whois -h whois.cymru.com " -v $ip" | tail -n 1)
+    local asn_number=$(echo "$asn_info" | awk '{print $1}')
+    local asn_org=$(echo "$asn_info" | awk -F'|' '{print $3}' | sed 's/^ *//;s/ *$//')
+
+    jq -n --arg ip "$ip" \
+        --arg asn "$asn_number" \
+        --arg org "$asn_org" \
+        '{
+            "ip_quality": {
+                "ip": $ip,
+                "asn": $asn,
+                "organization": $org,
+                "is_datacenter": (if ($org | test("Amazon|Google|Microsoft|Cloudflare")) then true else false end),
+                "blacklist_check": {
+                    "spamhaus": (if ("'$(curl -s "https://check.spamhaus.org/api?ip=$ip" | grep -c "LISTED")'" == "1") then true else false end
+                }
+            }
+        }'
+}
+
+# 流媒体检测
+function streaming_test() {
+    local json=$(curl -sSL "https://netflix-api.xyglab.cc/check?ip=$(curl -s ifconfig.me)")
+    jq -n \
+        --argjson netflix "$(jq '{netflix: .netflix, region: .netflix_region}' <<< "$json")" \
+        --argjson disney "$(jq '{disney: .disney}' <<< "$json")" \
+        --argjson tiktok "$(jq '{tiktok: .tiktok}' <<< "$json")" \
+        '{
+            "streaming": {
+                "netflix": $netflix,
+                "disney_plus": $disney,
+                "tiktok": $tiktok
+            }
+        }'
+}
+
+# 主程序
+install_royal_tools
+OUTPUT=$(init_json)
+
+# 执行检测并合并JSON
+IP_JSON=$(ip_quality_check)
+OUTPUT=$(jq --argjson ip "$IP_JSON" '.tests += $ip' <<< "$OUTPUT")
+
+STREAM_JSON=$(streaming_test)
+OUTPUT=$(jq --argjson stream "$STREAM_JSON" '.tests += $stream' <<< "$OUTPUT")
+
+# 输出美化后的JSON
+echo "$OUTPUT" | jq .
