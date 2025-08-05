@@ -20,17 +20,32 @@ check_root() {
 save_iptables_rules() {
     echo -e "${YELLOW}正在保存iptables规则...${NC}"
     if command -v iptables-save &>/dev/null; then
-        if [ -d /etc/sysconfig ]; then
-            iptables-save > /etc/sysconfig/iptables
-            echo -e "${GREEN}规则已保存到/etc/sysconfig/iptables${NC}"
-        elif [ -d /etc/iptables ]; then
-            iptables-save > /etc/iptables/rules.v4
-            echo -e "${GREEN}规则已保存到/etc/iptables/rules.v4${NC}"
-        else
-            echo -e "${YELLOW}无法确定iptables规则保存位置，请手动保存${NC}"
-            echo -e "${YELLOW}可以使用: iptables-save > /path/to/iptables.rules${NC}"
-            return 1
+        # 检查并停止firewalld（如果运行）
+        if systemctl is-active --quiet firewalld; then
+            echo -e "${YELLOW}检测到firewalld正在运行，正在停止...${NC}"
+            systemctl stop firewalld
+            systemctl disable firewalld
         fi
+        
+        # 安装iptables-services（如果未安装）
+        if ! rpm -q iptables-services &>/dev/null; then
+            echo -e "${YELLOW}安装iptables-services...${NC}"
+            dnf install -y iptables-services
+        fi
+        
+        # 启用并启动iptables服务
+        systemctl enable iptables
+        systemctl start iptables
+        
+        # 保存规则到标准位置
+        iptables-save > /etc/sysconfig/iptables
+        
+        # 备份规则
+        mkdir -p /etc/iptables
+        iptables-save > /etc/iptables/rules.v4
+        ip6tables-save > /etc/iptables/rules.v6
+        
+        echo -e "${GREEN}规则已保存到/etc/sysconfig/iptables和/etc/iptables/rules.v4${NC}"
     else
         echo -e "${RED}未找到iptables-save命令${NC}"
         return 1
